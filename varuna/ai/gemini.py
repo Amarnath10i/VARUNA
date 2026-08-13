@@ -39,7 +39,7 @@ class GeminiRiskBrief:
         self.model = None
         if self.api_key and genai:
             genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel("gemini-1.5-flash")
+            self.model = genai.GenerativeModel("gemini-2.5-flash")
         else:
             logger.warning("Gemini unavailable (no key or library). Briefs will use template fallback.")
 
