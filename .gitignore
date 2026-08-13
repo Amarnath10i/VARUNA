@@ -51,9 +51,8 @@ checkpoints/
 wandb/
 mlruns/
 
-# Notebooks output
+# Notebook checkpoints (notebooks themselves are tracked)
 .ipynb_checkpoints/
-*.ipynb
 
 # Colab / Drive mount
 /content/drive/
