@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "varuna"
+version = "0.1.0"
+description = "VARUNA - Uncertainty-aware neural-operator flood early-warning system"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Amarnath" }]
+dependencies = [
+    "torch>=2.1",
+    "torchvision>=0.16",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scipy>=1.10",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+    "einops>=0.6",
+]
+
+[project.optional-dependencies]
+data = ["netCDF4>=1.6", "xarray>=2023.1", "h5netcdf>=1.3"]
+viz = ["matplotlib>=3.7"]
+
+[tool.setuptools.packages.find]
+include = ["varuna*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,64 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific
+data/raw/
+data/processed/
+runs/
+*.pt
+*.pth
+checkpoints/
+*.nc
+*.h5
+*.zarr
+
+# Secrets & credentials (NEVER commit)
+.env
+.env.*
+*.pem
+*.key
+*credentials*
+*secret*
+*.json.enc
+
+# Logs
+*.log
+wandb/
+mlruns/
+
+# Notebooks output
+.ipynb_checkpoints/
+*.ipynb
+
+# Colab / Drive mount
+/content/drive/
+
+# Type checking
+.mypy_cache/
+.pytest_cache/
+.coverage
