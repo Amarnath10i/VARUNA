@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import replace
 
@@ -286,6 +287,9 @@ def run_conformal(args) -> None:
         "are relative to the catchment's mean flow.",
         "",
     ]
+    methods = ["one width for all (current VARUNA)", "log scale, per flow regime",
+               "log scale, per catchment, adaptive"]  # fmt: skip
+    cuts = {}
     targets = [("q_lstm", 1, "Regional LSTM simulation")]
     targets += [(f"q_fc_{h}", h, f"Forecast {h} day ahead") for h in (1, 3)]
     for col, lead, label in targets:
@@ -295,20 +299,160 @@ def run_conformal(args) -> None:
         cal = x[period_mask(x["date"], "valid") & x["q"].notna()]
         test = x[period_mask(x["date"], "test")].reset_index(drop=True)
         ints = uq.intervals(cal, test, col, stats, lead)
-        text += [f"## {label}", "", ev.md(uq.coverage_table(test, ints, stats)), ""]
-        if col.startswith("q_fc"):
-            methods = ["one width for all (current VARUNA)", "log scale, per flow regime",
-                       "log scale, per catchment, adaptive"]  # fmt: skip
-            cal_days = x[period_mask(x["date"], "valid")].reset_index(drop=True)
-            cut = uq.tune_probability(
-                cal_days, uq.exceedance_prob(cal, cal_days, col, stats), stats
-            )
-            prob = uq.exceedance_prob(cal, test, col, stats)
-            text += [
-                f"### Trigger backtest, {label.lower()}",
-                "",
-                ev.md(uq.trigger_table(test, col, ints, stats, methods, prob, cut)),
-                "",
-            ]
+        cal_days = x[period_mask(x["date"], "valid")].reset_index(drop=True)
+        cuts[col] = uq.tune_probability(
+            cal_days, uq.exceedance_prob(cal, cal_days, col, stats), stats
+        )
+        prob = uq.exceedance_prob(cal, test, col, stats)
+        text += [
+            f"## {label}",
+            "",
+            ev.md(uq.coverage_table(test, ints, stats)),
+            "",
+            f"### Trigger backtest, {label.lower()}",
+            "",
+            ev.md(uq.trigger_table(test, col, ints, stats, methods, prob, cuts[col])),
+            "",
+        ]
+    RUNS.mkdir(parents=True, exist_ok=True)
+    (RUNS / "trigger_cutoffs.json").write_text(json.dumps(cuts, indent=2), encoding="utf-8")
     (REPORTS / "uncertainty.md").write_text("\n".join(text), encoding="utf-8")
     print("\n".join(text))
+
+
+KERALA = [15024, 15021, 15012, 15014, 15005, 15026, 15011]
+
+
+def run_kerala(args) -> None:
+    """The August 2018 Kerala floods, replayed through the hindcast."""
+    from varuna.pipeline.hindcast import hindcast
+
+    days = pd.date_range("2018-08-06", "2018-08-24")
+    rows = []
+    for day in days:
+        for dec in hindcast(str(day.date()), KERALA)["decisions"]:
+            gauge = int(dec["region_id"].split()[0])
+            rows.append({
+                "gauge": gauge, "site": dec["region_id"].split(" ", 1)[1], "date": day,
+                "rain_3d": dec["rainfall_accum_3d_mm"], "sim": dec["discharge"]["mean"],
+                "lo": dec["discharge"]["interval"][0], "hi": dec["discharge"]["interval"][1],
+                "p_flood": dec["details"]["exceed_prob"], "threshold": dec["details"]["threshold"],
+                "fired": "discharge" in (dec["trigger_type"] or ""),
+                "obs": dec["observed"]["discharge"],
+            })  # fmt: skip
+    k = pd.DataFrame(rows)
+    k.to_csv(REPORTS / "kerala_2018.csv", index=False)
+    summary = []
+    for _, x in k.groupby("gauge", sort=False):
+        seen = x["obs"].notna()
+        flood = seen & (x["obs"] > x["threshold"])
+        peak = x.loc[x["obs"].idxmax()] if seen.any() else None
+        first_fire = x.loc[x["fired"], "date"].min()
+        summary.append({
+            "gauge": x["site"].iloc[0],
+            "silent on 14-20 Aug": f"{(~seen & x['date'].between('2018-08-14', '2018-08-20')).sum()} of 7 days",
+            "observed flood days": int(flood.sum()),
+            "trigger fired on them": f"{int((flood & x['fired']).sum())}",
+            "fired on observed non-flood days": int((seen & ~flood & x["fired"]).sum()),
+            "first trigger": "-" if pd.isna(first_fire) else f"{first_fire:%d %b}",
+            "highest reading": "-" if peak is None else f"{peak['obs']:,.0f} m3/s on {peak['date']:%d %b}",
+            "simulated peak": f"{x['sim'].max():,.0f} m3/s on {x.loc[x['sim'].idxmax(), 'date']:%d %b}",
+        })  # fmt: skip
+    p = k[k["gauge"] == KERALA[0]]
+    detail = pd.DataFrame({
+        "date": p["date"].dt.strftime("%d %b"),
+        "3-day rain (mm)": p["rain_3d"].round(0).astype(int),
+        "observed (m3/s)": p["obs"].map(lambda v: "no reading" if pd.isna(v) else f"{v:,.0f}"),
+        "simulated (m3/s)": p["sim"].map("{:,.0f}".format),
+        "90% interval": [f"{a:,.0f}-{b:,.0f}" for a, b in zip(p["lo"], p["hi"], strict=True)],
+        "P(flood)": p["p_flood"].map("{:.2f}".format),
+        "trigger": p["fired"].map({True: "fires", False: ""}),
+    })  # fmt: skip
+    _kerala_figure(k)
+    thr = p["threshold"].iloc[0]
+    text = [
+        "# Kerala, August 2018",
+        "",
+        "The worst flooding in Kerala in a century peaked on 15-17 August 2018. "
+        "This replays VARUNA's decision chain (`python -m varuna.pipeline.hindcast`) "
+        "for each day and every CAMELS-IND gauge in the affected rivers: the "
+        "regional LSTM simulates flow from the day's rain, the conformal predictive "
+        "distribution gives a 90% interval and P(flood), and the RiskEngine fires "
+        "when P(flood) reaches the cut-off chosen on 1981-1990. Flood threshold: "
+        "the gauge's 99th percentile of 1991-2015 flow. None of 2018 was used for "
+        "training or tuning; the rain is the observed rain (a perfect forecast).",
+        "",
+        "![Kerala 2018](figures/kerala_2018.png)",
+        "",
+        "## Each gauge, 6-24 August",
+        "",
+        pd.DataFrame(summary).to_markdown(index=False),
+        "",
+        f"## {p['site'].iloc[0]}, the one gauge that recorded the peak (threshold {thr:,.0f} m3/s)",
+        "",
+        detail.to_markdown(index=False),
+        "",
+    ]
+    (REPORTS / "kerala_2018.md").write_text("\n".join(text), encoding="utf-8")
+    print("\n".join(text))
+
+
+def _kerala_figure(k: pd.DataFrame) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+
+    ink, ink2, muted, grid, base = "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7"
+    sim_c, obs_c, crit = "#2a78d6", "#eb6834", "#d03b3b"
+    show = KERALA[:4]
+    fig, axes = plt.subplots(2, 2, figsize=(11, 6.4), sharex=True, facecolor="#fcfcfb")
+    plt.rcParams["font.family"] = ["Segoe UI", "DejaVu Sans"]
+    for ax, g in zip(axes.flat, show, strict=True):
+        x = k[k["gauge"] == g]
+        ax.set_facecolor("#fcfcfb")
+        silent = x["obs"].isna().to_numpy()
+        for day, quiet in zip(x["date"], silent, strict=True):
+            if quiet:
+                ax.axvspan(day - pd.Timedelta(hours=12), day + pd.Timedelta(hours=12),
+                           facecolor="none", edgecolor=grid, hatch="//", linewidth=0)  # fmt: skip
+        ax.fill_between(x["date"], x["lo"], x["hi"], color=sim_c, alpha=0.14, linewidth=0)
+        ax.plot(x["date"], x["sim"], color=sim_c, lw=2)
+        ax.plot(x["date"], x["obs"], color=obs_c, lw=2, marker="o", ms=5)
+        ax.axhline(x["threshold"].iloc[0], color=muted, lw=1.2, ls=(0, (4, 3)))
+        top = ax.get_ylim()[1]
+        fired = x[x["fired"]]
+        ax.plot(
+            fired["date"], np.full(len(fired), top * 0.97), ls="none", marker="v", ms=7, color=crit
+        )
+        ax.set_ylim(0, top)
+        ax.set_title(x["site"].iloc[0], loc="left", fontsize=10.5, color=ink)
+        ax.grid(axis="y", color=grid, lw=0.6)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(base)
+        ax.tick_params(colors=muted, labelsize=8.5)
+        ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+    for ax in axes[:, 0]:
+        ax.set_ylabel("discharge (m³/s)", color=ink2, fontsize=9)
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+
+    handles = [
+        Line2D([], [], color=obs_c, lw=2, marker="o", ms=5, label="observed"),
+        Line2D([], [], color=sim_c, lw=2, label="LSTM simulation"),
+        Patch(facecolor=sim_c, alpha=0.14, label="90% interval"),
+        Line2D([], [], color=muted, lw=1.2, ls=(0, (4, 3)), label="flood threshold"),
+        Patch(facecolor="none", edgecolor=grid, hatch="//", label="gauge silent"),
+        Line2D([], [], ls="none", marker="v", ms=7, color=crit, label="trigger fired"),
+    ]
+    fig.legend(handles=handles, loc="upper center", ncol=6, frameon=False, fontsize=9,
+               labelcolor=ink2, bbox_to_anchor=(0.5, 0.995))  # fmt: skip
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    (REPORTS / "figures").mkdir(parents=True, exist_ok=True)
+    fig.savefig(REPORTS / "figures" / "kerala_2018.png", dpi=150, facecolor=fig.get_facecolor())
+    plt.close(fig)

@@ -25,6 +25,7 @@ dependencies = [
     "scikit-learn>=1.5",
     "tabulate>=0.9",
     "numba>=0.60",
+    "matplotlib>=3.8",
 ]
 
 [project.optional-dependencies]

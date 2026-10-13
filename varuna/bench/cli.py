@@ -19,6 +19,7 @@ def main(argv: list[str] | None = None) -> None:
             "floods",
             "conformal",
             "forecast",
+            "kerala",
         ],
     )
     ap.add_argument("--seeds", type=int, default=3, help="LSTM ensemble size")
