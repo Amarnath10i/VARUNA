@@ -33,6 +33,7 @@ class LiveSample:
     time: str
     values: np.ndarray  # [H, W] or [N,]
     meta: dict = field(default_factory=dict)
+    placeholder: bool = False  # zeros standing in for data that wasn't obtained
 
 
 def _cache_dir() -> Path:
@@ -75,13 +76,12 @@ class GFSPrecipitationAPI:
             ok = False
         if not ok:
             logger.warning("GFS endpoint unreachable (%s) - returning zero-field placeholder.", url)
-            values = np.zeros((720, 1440), dtype=np.float32)
         else:
-            # real clients would decode the grib2 with cfgrib; placeholder
-            # keeps this runnable without the full GRIB stack.
-            logger.info("GFS cycle %s reachable. Decoding would use cfgrib.", cycle)
-            values = np.zeros((720, 1440), dtype=np.float32)
-        return LiveSample("gfs", "precip", f"{cycle}:00Z", values)
+            # GRIB2 decoding (cfgrib) is not implemented: even a reachable
+            # cycle yields a placeholder, and is marked as one.
+            logger.warning("GFS cycle %s reachable but not decoded - placeholder.", cycle)
+        values = np.zeros((720, 1440), dtype=np.float32)
+        return LiveSample("gfs", "precip", f"{cycle}:00Z", values, placeholder=True)
 
 
 class IMDNowcastAPI:
@@ -101,7 +101,7 @@ class IMDNowcastAPI:
             return LiveSample("imd", "rainfall", payload.get("time", "now"), np.asarray(payload.get("grid", [[0.0]])))
         except Exception as exc:  # pragma: no cover
             logger.warning("IMD API unavailable (%s). Returning placeholder.", exc)
-            return LiveSample("imd", "rainfall", "now", np.zeros((1, 1), dtype=np.float32))
+            return LiveSample("imd", "rainfall", "now", np.zeros((1, 1), dtype=np.float32), placeholder=True)
 
 
 class GloFASAPI:
@@ -119,7 +119,7 @@ class GloFASAPI:
             return LiveSample("glofas", "discharge", data.get("time", "now"), np.asarray(data.get("discharge", [0.0])))
         except Exception as exc:  # pragma: no cover
             logger.warning("GLOFAS unavailable (%s). Returning placeholder.", exc)
-            return LiveSample("glofas", "discharge", "now", np.zeros((1,), dtype=np.float32))
+            return LiveSample("glofas", "discharge", "now", np.zeros((1,), dtype=np.float32), placeholder=True)
 
 
 class SentinelNRTClient:

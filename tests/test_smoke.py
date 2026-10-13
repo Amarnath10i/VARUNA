@@ -70,10 +70,17 @@ def test_risk_engine():
     mean = np.array([120.0])
     lo = np.array([110.0])
     hi = np.array([130.0])
-    d = eng.evaluate(mean, lo, hi, rainfall_accum_3d=60.0, flood_prob=np.full((10, 10), 0.7))
+    d = eng.evaluate(mean, lo, hi, rainfall_accum_3d=60.0, flood_prob=np.full((10, 10), 0.7), exceed_prob=0.4)
     assert d.triggered is True
     assert "discharge" in d.trigger_type
     assert d.details["payout"] == pol.payout_per_event
+    quiet = eng.evaluate(mean, lo, hi, rainfall_accum_3d=10.0, exceed_prob=0.05)
+    assert quiet.triggered is False and quiet.details["payout"] == 0.0
+
+    legacy = RiskEngine(RiskPolicy("test", 100.0, 50.0, 0.2, trigger_rule="lower_bound"))
+    assert legacy.evaluate(mean, lo, hi, rainfall_accum_3d=10.0).triggered is True
+    wide = legacy.evaluate(mean, np.array([60.0]), np.array([400.0]), rainfall_accum_3d=10.0)
+    assert wide.triggered is False  # the lower bound misses the threshold
 
 
 def test_models_forward():
@@ -106,17 +113,18 @@ def test_models_forward():
     assert prob.shape == (1, 1, 32, 32)
 
 
-def test_pipeline_offline():
+def test_live_pipeline_refuses_to_decide_without_real_inputs():
     import json
 
     from varuna.pipeline.forecast import ForecastPipeline
 
     cfg = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
     pipe = ForecastPipeline(cfg, run_dir="runs/test_cycle")
-    decisions = pipe.run()
-    assert len(decisions) == 2
+    assert pipe.run() == []
     out = json.loads((pipe.run_dir / "latest_cycle.json").read_text())
-    assert "decisions" in out
+    assert out["status"] == "no_decision" and out["decisions"] == []
+    assert any("benchmarked" in r for r in out["reasons"])
+    assert out["feeds"]["gfs"]["placeholder"]  # GRIB2 is never decoded
 
 
 if __name__ == "__main__":
