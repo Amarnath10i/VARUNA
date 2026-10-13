@@ -116,6 +116,16 @@ def load() -> Camels:
     daily.loc[daily["q"] < 0, "q"] = np.nan  # negative discharge is a recording error
     daily["q_raw"] = daily["q"]
     daily.loc[spikes(daily), "q"] = np.nan
+    # 0 degC is a fill value in the gridded temperature (tmin reads 0 in every
+    # catchment on 2019-01-11, among ~300 such days; partly filled cells on
+    # 2019-05-07 leave tmax below tmin): interpolate within gauge
+    bad_max = (daily["tmax"] == 0) | (daily["tmax"] < daily["tmin"])
+    daily["tmax"] = daily["tmax"].mask(bad_max)
+    daily["tmin"] = daily["tmin"].mask(daily["tmin"] == 0)
+    for c in ("tmax", "tmin"):
+        daily[c] = daily.groupby("gauge")[c].transform(
+            lambda s: s.interpolate(limit_direction="both")
+        )
     for c in FORCING:
         daily[c] = daily[c].astype(np.float32)
 
