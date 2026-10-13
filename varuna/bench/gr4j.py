@@ -128,7 +128,9 @@ def nse(obs: np.ndarray, sim: np.ndarray) -> float:
     return float(1.0 - np.sum((s - o) ** 2) / np.sum((o - o.mean()) ** 2))
 
 
-def calibrate(p, e, q_obs, fit_mask, seed: int = 0, maxiter: int = 60) -> tuple[tuple, float]:
+def calibrate(
+    p, e, q_obs, fit_mask, seed: int = 0, maxiter: int = 60, bounds=None
+) -> tuple[tuple, float]:
     """Parameters maximizing NSE on `fit_mask` days (with observed flow)."""
     target = q_obs.copy()
     target[~fit_mask] = np.nan
@@ -138,6 +140,6 @@ def calibrate(p, e, q_obs, fit_mask, seed: int = 0, maxiter: int = 60) -> tuple[
         v = nse(target, sim)
         return 1.0 - v if np.isfinite(v) else 1e6
 
-    res = differential_evolution(loss, BOUNDS, seed=seed, maxiter=maxiter, popsize=12, tol=1e-6,
+    res = differential_evolution(loss, bounds or BOUNDS, seed=seed, maxiter=maxiter, popsize=12, tol=1e-6,
                                  polish=True, updating="deferred", workers=1)  # fmt: skip
     return to_params(res.x), 1.0 - float(res.fun)

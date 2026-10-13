@@ -55,12 +55,14 @@ def climatology(daily: pd.DataFrame, half_window: int = 15) -> pd.Series:
 
 
 def _fit_one(args):
-    g, p, e, q, fit = args
-    params, score = gr4j.calibrate(p, e, q, fit, seed=int(g) % 1000, maxiter=100)
+    g, p, e, q, fit, bounds = args
+    params, score = gr4j.calibrate(p, e, q, fit, seed=int(g) % 1000, maxiter=100, bounds=bounds)
     return g, params, score, gr4j.simulate(p, e, *params)[0]
 
 
-def calibrate_gr4j(c: Camels, workers: int | None = None) -> tuple[pd.DataFrame, pd.Series]:
+def calibrate_gr4j(
+    c: Camels, workers: int | None = None, bounds=None
+) -> tuple[pd.DataFrame, pd.Series]:
     """Per-catchment GR4J on the training years; the simulation runs from
     1980, so 1980-1990 forcing warms the stores without using their flows."""
     d = c.daily
@@ -75,6 +77,7 @@ def calibrate_gr4j(c: Camels, workers: int | None = None) -> tuple[pd.DataFrame,
                 sub["pet_gleam"].to_numpy(np.float64),
                 sub["q"].to_numpy(np.float64),
                 fit_all[idx],
+                bounds,
             )
         )
     sim = pd.Series(np.nan, index=d.index, name="q_gr4j")
