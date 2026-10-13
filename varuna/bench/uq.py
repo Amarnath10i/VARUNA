@@ -26,6 +26,7 @@ from .metrics import bootstrap_event_skill, event_scores, events
 
 ALPHA = 0.10
 REGIMES = (0.5, 0.9, 0.99)
+FIRE = 1e30  # a finite "above any threshold" signal (non-finite reads as no data)
 
 
 def gauge_stats(c: Camels) -> pd.DataFrame:
@@ -112,6 +113,40 @@ def intervals(cal: pd.DataFrame, test: pd.DataFrame, col: str, stats: pd.DataFra
     return out
 
 
+def exceedance_prob(
+    cal: pd.DataFrame, x: pd.DataFrame, col: str, stats: pd.DataFrame
+) -> np.ndarray:
+    """P(flow > flood threshold) for each row of `x`, from a conformal
+    predictive distribution (Vovk et al. 2017): the forecast in log space
+    plus the signed log errors seen on the calibration years at the same
+    flow regime."""
+    off_c = stats.loc[cal["gauge"], "offset"].to_numpy()
+    off_x = stats.loc[x["gauge"], "offset"].to_numpy()
+    r = np.log(cal["q"].to_numpy() + off_c) - np.log(np.clip(cal[col].to_numpy(), 0, None) + off_c)
+    rc = regime(cal[col].to_numpy(), cal["gauge"].to_numpy(), stats)
+    rx = regime(x[col].to_numpy(), x["gauge"].to_numpy(), stats)
+    thr = stats.loc[x["gauge"], "threshold"].to_numpy()
+    need = np.log(thr + off_x) - np.log(np.clip(x[col].to_numpy(), 0, None) + off_x)
+    p = np.zeros(len(x))
+    for k in np.unique(rx):
+        errs = np.sort(r[(rc == k) & np.isfinite(r)])
+        m = rx == k
+        p[m] = 1.0 - np.searchsorted(errs, need[m], side="right") / (len(errs) + 1)
+    return p
+
+
+def tune_probability(cal_days: pd.DataFrame, p: np.ndarray, stats: pd.DataFrame) -> float:
+    """The exceedance probability above which to fire, chosen on the
+    calibration years to maximize the critical success index."""
+    best, best_csi = 0.5, -1.0
+    for cut in np.round(np.arange(0.05, 0.96, 0.05), 2):
+        t = cal_days.assign(_s=np.where(p >= cut, FIRE, -np.inf))
+        sk = flood_skill(t, {"_s": ""}, stats).iloc[0]
+        if float(sk["CSI"]) > best_csi:
+            best, best_csi = float(cut), float(sk["CSI"])
+    return best
+
+
 def coverage_table(test: pd.DataFrame, ints: dict, stats: pd.DataFrame) -> pd.DataFrame:
     y = test["q"].to_numpy()
     seen = np.isfinite(y)
@@ -130,35 +165,53 @@ def coverage_table(test: pd.DataFrame, ints: dict, stats: pd.DataFrame) -> pd.Da
             "below median flow": f"{inside[seen & (y < low)].mean():.1%}",
             "catchments within 85-95%": f"{per_g.between(0.85, 0.95).mean():.0%}",
             "median width / mean flow": f"{np.median(((hi - lo) / mean)[seen]):.2f}",
-            "width on flood days": f"{np.median(((hi - lo) / mean)[flood]):.1f}",
+            "flood days: width / observed flow": f"{np.median(((hi - lo) / y)[flood]):.2f}",
         })  # fmt: skip
     return pd.DataFrame(rows)
 
 
 def trigger_table(test: pd.DataFrame, col: str, ints: dict, stats: pd.DataFrame,
-                  methods: list[str]) -> pd.DataFrame:  # fmt: skip
-    """VARUNA's discharge trigger (fire when the interval's lower bound clears
-    the threshold) against firing on the point forecast or the upper bound."""
+                  methods: list[str], prob: np.ndarray | None = None,
+                  cut: float | None = None) -> pd.DataFrame:  # fmt: skip
+    """VARUNA's discharge trigger against alternatives. As written, the
+    RiskEngine fires when the interval's lower bound clears the threshold and
+    the interval is "confident": narrower than half the forecast or 60% of
+    the threshold."""
     years = test["date"].dt.year.nunique()
+    point = test[col].to_numpy()
+    thr = stats.loc[test["gauge"], "threshold"].to_numpy()
     rows = []
+
+    def add(rule, name, signal):
+        t = test.assign(_s=signal)
+        sk = flood_skill(t, {"_s": rule}, stats).iloc[0]
+        fired = sum(
+            len(events(np.isfinite(x["q"]) & (x["_s"] > stats.at[g, "threshold"])))
+            for g, x in t.groupby("gauge")
+        )
+        rows.append({
+            "fires when": rule,
+            "intervals": name,
+            "POD": sk["POD (95% CI)"].split(" ")[0],
+            "FAR": sk["FAR (95% CI)"].split(" ")[0],
+            "CSI": sk["CSI"],
+            "onsets warned": sk["onsets warned"],
+            "triggers per catchment-year": f"{fired / (t['gauge'].nunique() * years):.2f}",
+        })  # fmt: skip
+
+    add("point forecast", "-", point)
     for name in methods:
         lo, hi = ints[name]
-        for rule, signal in (("lower bound", lo), ("point forecast", test[col].to_numpy()),
-                             ("upper bound", hi)):  # fmt: skip
-            if rule == "point forecast" and name != methods[0]:
-                continue
-            t = test.assign(_s=signal)
-            sk = flood_skill(t, {"_s": rule}, stats).iloc[0]
-            fired = sum(
-                len(events(np.isfinite(x["q"]) & (x["_s"] > stats.at[g, "threshold"])))
-                for g, x in t.groupby("gauge")
-            )
-            rows.append({
-                "fires when": rule,
-                "intervals": "-" if rule == "point forecast" else name,
-                "POD": sk["POD (95% CI)"].split(" ")[0],
-                "FAR": sk["FAR (95% CI)"].split(" ")[0],
-                "onsets warned": sk["onsets warned"],
-                "triggers per catchment-year": f"{fired / (t['gauge'].nunique() * years):.2f}",
-            })  # fmt: skip
+        band = hi - lo
+        confident = (band <= 0.5 * np.maximum(point, 1e-3)) | (band <= 0.6 * thr)
+        add(
+            "lower bound and confident (RiskEngine as written)",
+            name,
+            np.where(confident, lo, -np.inf),
+        )
+        add("lower bound", name, lo)
+        add("upper bound", name, hi)
+    if prob is not None:
+        add(f"P(flood) >= {cut:.2f}, cut-off tuned on 1981-1990", "log scale, per flow regime",
+            np.where(prob >= cut, FIRE, -np.inf))  # fmt: skip
     return pd.DataFrame(rows)

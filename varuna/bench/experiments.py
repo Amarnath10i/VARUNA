@@ -119,9 +119,16 @@ def run_evaluate(args) -> None:
         "",
         ev.md(ev.paired(scores, ref, [m for m in models if m != ref])),
         "",
-        "## By regulation and climate (median NSE)",
+        f"## By regulation and climate: {ev.MODELS[ref].strip('*')}, paired with each model",
         "",
-        ev.md(ev.by_group(c, scores, list(dict.fromkeys(("q_gr4j", "q_lstm_pub", ref))))),
+        ev.md(
+            ev.by_group(
+                c,
+                scores,
+                ref,
+                [m for m in ("q_gr4j", "q_lgbm", "q_lstm_pub") if m in models and m != ref],
+            )
+        ),
         "",
         "## Excluded: runoff above 1.5 times rainfall (NSE)",
         "",
@@ -292,10 +299,15 @@ def run_conformal(args) -> None:
         if col.startswith("q_fc"):
             methods = ["one width for all (current VARUNA)", "log scale, per flow regime",
                        "log scale, per catchment, adaptive"]  # fmt: skip
+            cal_days = x[period_mask(x["date"], "valid")].reset_index(drop=True)
+            cut = uq.tune_probability(
+                cal_days, uq.exceedance_prob(cal, cal_days, col, stats), stats
+            )
+            prob = uq.exceedance_prob(cal, test, col, stats)
             text += [
                 f"### Trigger backtest, {label.lower()}",
                 "",
-                ev.md(uq.trigger_table(test, col, ints, stats, methods)),
+                ev.md(uq.trigger_table(test, col, ints, stats, methods, prob, cut)),
                 "",
             ]
     (REPORTS / "uncertainty.md").write_text("\n".join(text), encoding="utf-8")

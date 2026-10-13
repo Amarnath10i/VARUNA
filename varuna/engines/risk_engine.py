@@ -24,6 +24,12 @@ class RiskPolicy:
     lead_days: int = 3
     coverage_alpha: float = 0.90  # required conformal coverage
     payout_per_event: float = 5000.0
+    # "probability": fire when P(discharge > threshold) >= min_probability.
+    # "lower_bound": fire when the interval's lower bound clears the threshold
+    # and the interval is narrow. With calibrated intervals the latter almost
+    # never fires: floods are where intervals are widest (reports/uncertainty.md).
+    trigger_rule: str = "probability"
+    min_probability: float = 0.15  # tuned on 1981-1990 for the best CSI
 
 
 @dataclass
@@ -44,14 +50,15 @@ class RiskDecision:
 class RiskEngine:
     """Fuses RainCast + HydroNet + FloodMap outputs into decisions.
 
-    Trigger logic:
-      1. Forecast discharge (with conformal interval) exceeds threshold at
-         the required lead time, AND
-      2. The 3-day accumulated rainfall forecast exceeds the rainfall index,
-         AND
+    Trigger logic (any one fires):
+      1. Discharge: with trigger_rule="probability", the forecast probability
+         of exceeding the threshold reaches min_probability; with
+         "lower_bound", the conformal lower bound exceeds the threshold and
+         the interval is narrower than a sanity band.
+      2. The 3-day accumulated rainfall forecast exceeds the rainfall index.
       3. If a flood map is available, flooded-pixel fraction >= cover fraction.
-      4. Confidence is only trusted if the conformal interval is narrower
-         than a sanity band (so we never fire on wildly uncertain forecasts).
+    The backtest on 2016-2020 (reports/uncertainty.md) is why "probability"
+    is the default.
     """
 
     def __init__(self, policy: RiskPolicy) -> None:
@@ -64,6 +71,7 @@ class RiskEngine:
         discharge_hi: np.ndarray,
         rainfall_accum_3d: float,
         flood_prob: np.ndarray | None = None,
+        exceed_prob: float | None = None,
     ) -> RiskDecision:
         pol = self.policy
         # discharge arrays are [T, N]; take last time step, mean across nodes (or node 0)
@@ -74,7 +82,15 @@ class RiskEngine:
         band = hi - lo
         confidence_ok = band <= 0.5 * max(mean, 1e-3) or band <= 0.6 * pol.discharge_threshold
 
-        discharge_trig = lo > pol.discharge_threshold  # conservative: use lower bound
+        if pol.trigger_rule == "probability":
+            if exceed_prob is None:
+                raise ValueError("trigger_rule='probability' needs exceed_prob")
+            discharge_trig = exceed_prob >= pol.min_probability
+            confidence_ok = True  # the probability already carries the uncertainty
+        elif pol.trigger_rule == "lower_bound":
+            discharge_trig = lo > pol.discharge_threshold
+        else:
+            raise ValueError(f"unknown trigger_rule {pol.trigger_rule!r}")
         rainfall_trig = rainfall_accum_3d >= pol.rainfall_threshold_mm
 
         flood_cover = 0.0
@@ -104,6 +120,8 @@ class RiskEngine:
             flood_cover=flood_cover,
             confidence_ok=confidence_ok,
             details={
+                "trigger_rule": pol.trigger_rule,
+                "exceed_prob": exceed_prob,
                 "lead_days": pol.lead_days,
                 "threshold": pol.discharge_threshold,
                 "payout": pol.payout_per_event if triggered else 0.0,

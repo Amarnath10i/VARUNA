@@ -75,8 +75,14 @@ def paired(scores: pd.DataFrame, ref: str, others: list[str], labels=MODELS) -> 
     return pd.DataFrame(rows)
 
 
-def by_group(c: Camels, scores: pd.DataFrame, models: list[str], labels=MODELS) -> pd.DataFrame:
-    """Median NSE by reservoir regulation and by aridity."""
+def by_group(
+    c: Camels, scores: pd.DataFrame, ref: str, others: list[str], labels=MODELS
+) -> pd.DataFrame:
+    """Median NSE of `ref` by reservoir regulation and by aridity, and its
+    paired gain over each other model within the group. Group medians alone
+    mislead: NSE is heavy-tailed in dry and regulated catchments (one scores
+    -3,667), so two models' medians can differ by 0.2 while their paired
+    difference is indistinguishable from zero."""
     st = c.static
     ri = st["reservoir_index"]
     reg = pd.Series("unknown", index=st.index)
@@ -87,16 +93,18 @@ def by_group(c: Camels, scores: pd.DataFrame, models: list[str], labels=MODELS) 
     ar = pd.Series(f"wet (P/PET > {q[1]:.2f})", index=st.index)
     ar[st["aridity_p_pet"] <= q[1]] = "middle"
     ar[st["aridity_p_pet"] <= q[0]] = f"dry (P/PET <= {q[0]:.2f})"
-    w = scores.pivot(index="gauge", columns="model", values="NSE")[models]
+    w = scores.pivot(index="gauge", columns="model", values="NSE")
     rows = []
     for name, groups in (("regulation", reg), ("aridity", ar)):
         keys = groups.reindex(w.index)
-        order = list(dict.fromkeys([*groups.sort_values().unique()]))
-        for gname in sorted(order, key=_rank):
-            idx = keys.index[keys == gname]
-            sub = w.loc[idx]
-            rows.append({"split": name, "group": gname, "catchments": len(sub),
-                         **{labels.get(m, m): f"{sub[m].median():.3f}" for m in models}})  # fmt: skip
+        for gname in sorted(keys.unique(), key=_rank):
+            sub = w[keys == gname]
+            row = {"split": name, "group": gname, "catchments": len(sub),
+                   "median NSE": f"{sub[ref].median():.3f}"}  # fmt: skip
+            for m in others:
+                med, lo, hi = bootstrap_median((sub[ref] - sub[m]).dropna())
+                row[f"gain over {labels.get(m, m)}"] = f"{med:+.3f} ({lo:+.2f} to {hi:+.2f})"
+            rows.append(row)
     return pd.DataFrame(rows)
 
 
