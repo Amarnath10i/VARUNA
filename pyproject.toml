@@ -7,7 +7,7 @@ name = "varuna"
 version = "0.1.0"
 description = "VARUNA - Uncertainty-aware neural-operator flood early-warning system"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Amarnath" }]
 dependencies = [
@@ -20,6 +20,11 @@ dependencies = [
     "requests>=2.31",
     "einops>=0.6",
     "google-generativeai>=0.4",
+    "lightgbm>=4.5",
+    "pyarrow>=16",
+    "scikit-learn>=1.5",
+    "tabulate>=0.9",
+    "numba>=0.60",
 ]
 
 [project.optional-dependencies]
@@ -29,5 +34,30 @@ viz = ["matplotlib>=3.7"]
 [tool.setuptools.packages.find]
 include = ["varuna*"]
 
+[dependency-groups]
+dev = ["pytest>=8.3", "ruff>=0.6"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[project.scripts]
+varuna-bench = "varuna.bench.cli:main"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+extend-include = []
+include = ["varuna/bench/**/*.py", "tests/test_bench*.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "NPY"]
+ignore = ["E501"]
