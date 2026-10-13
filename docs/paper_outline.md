@@ -1,3 +1,7 @@
+> **Status.** This outline was drafted before any experiment. Its results (CRPS gains, nominal
+> coverage, few-shot flood mapping) were never measured, and RainCast, HydroNet and FloodMap have
+> not been trained on real data. Measured results: the README and `reports/`.
+
 # VARUNA — Manuscript Outline (Q1-target)
 
 Working title:
