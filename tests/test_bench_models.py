@@ -109,3 +109,21 @@ def test_lgbm_features_look_only_backwards():
     before = f0["date"] < "2018-01-01"
     cols = [k for k in f0.columns if k not in ("gauge", "date", "q")]
     pd.testing.assert_frame_equal(f0.loc[before, cols], f1.loc[before, cols])
+
+
+@pytest.mark.parametrize("lead", [1, 3])
+def test_forecast_features_stop_at_the_issue_day(lead):
+    from varuna.bench import forecast
+
+    c = synthetic(n_gauges=1)
+    base = lgbm.features(c)
+    f0 = forecast.features(base, lead)
+    target = 9000
+    changed = base.copy()
+    changed.loc[target - lead + 1 :, "q"] = 1e6  # flows after the issue day
+    f1 = forecast.features(changed, lead)
+    cols = [k for k in f0.columns if k.startswith("q_obs")]
+    pd.testing.assert_series_equal(f0.loc[target, cols], f1.loc[target, cols])
+    assert forecast.persistence(changed, lead)[target] == base.loc[target - lead, "q"] or np.isnan(
+        base.loc[target - lead, "q"]
+    )
