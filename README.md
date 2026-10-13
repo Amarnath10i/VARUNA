@@ -25,6 +25,18 @@ checked against a river. This repository now does the following:
 - **Stops** the live pipeline from issuing decisions it can't back. It now
   records why it can't decide.
 
+## Dashboard
+
+```bash
+pip install streamlit pandas matplotlib
+streamlit run app.py
+```
+
+Explores the committed reports without the datasets or a GPU: the per-catchment
+NSE distribution of every model, a day-by-day replay of the Kerala 2018 floods
+for each gauge (simulated flow, 90% interval, P(flood) and when the trigger
+fired), the flood and uncertainty reports, and the LSTM training curves.
+
 ## Results
 
 Every number is on 2016-2020. No model was fitted, tuned or selected on
