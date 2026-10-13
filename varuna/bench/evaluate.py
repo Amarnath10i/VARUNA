@@ -18,6 +18,16 @@ MODELS = {
     "q_lstm_single": "Regional LSTM, one seed",
     "q_lstm": "**Regional LSTM, 3-seed ensemble**",
 }
+UNGAUGED = {
+    "q_gr4j": "GR4J calibrated on the catchment's own flows (gauged reference)",
+    "q_lstm": "Regional LSTM trained with the catchment (gauged reference)",
+    "q_gr4j_donor_basin": "GR4J with parameters of the 5 most similar catchments",
+    "q_lgbm_ug_basin": "LightGBM, catchment's river basin held out",
+    "q_lstm_ug_basin": "**Regional LSTM, catchment's river basin held out**",
+    "q_gr4j_donor_random": "GR4J donors, random folds",
+    "q_lgbm_ug_random": "LightGBM, random folds",
+    "q_lstm_ug_random": "Regional LSTM, random folds",
+}
 SIMS = ("sims_conceptual", "sims_lstm", "sims_lgbm", "sims_ungauged", "sims_forecast")
 
 

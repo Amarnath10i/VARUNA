@@ -84,6 +84,30 @@ def run_lgbm(args) -> None:
     out.to_parquet(CACHE / "sims_lgbm.parquet", index=False)
 
 
+def _ungauged_section(c, d) -> list[str]:
+    from . import evaluate as ev
+
+    models = ev.available(d, ev.UNGAUGED)
+    if "q_lstm_ug_basin" not in models:
+        return []
+    scores = ev.test_scores(c, d, models)
+    ref = "q_lstm_ug_basin"
+    others = [m for m in models if m != ref]
+    return [
+        "## Ungauged catchments",
+        "",
+        "Each catchment predicted by models that never saw its flows: 5 folds of "
+        "whole river basins (Godavari alone is one fold), so no test gauge shares a "
+        "river network with a training gauge. Random 5-fold over gauges, the usual "
+        "protocol, is shown for comparison: nested gauges can then sit on both sides.",
+        "",
+        ev.md(ev.summary(scores, models, labels=ev.UNGAUGED)),
+        "",
+        ev.md(ev.paired(scores, ref, others, labels=ev.UNGAUGED)),
+        "",
+    ]
+
+
 def run_evaluate(args) -> None:
     from . import evaluate as ev
 
@@ -131,6 +155,7 @@ def run_evaluate(args) -> None:
             )
         ),
         "",
+        *_ungauged_section(c, d),
         "## Excluded: runoff above 1.5 times rainfall (NSE)",
         "",
         ev.outliers(c, d, models).reset_index().to_markdown(index=False),
